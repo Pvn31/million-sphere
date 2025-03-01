@@ -2,7 +2,27 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>1 Million Spheres - PBR Materials with Dynamic Lighting</title>
+    
+    <!-- Primary Meta Tags -->
+    <meta name="title" content="1 Million Spheres - PBR Materials with Dynamic Lighting">
+    <meta name="description" content="Interactive 3D visualization showcasing one million physically-based rendered spheres with dynamic lighting effects and material properties.">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://million-sphere.pages.dev/">
+    <meta property="og:title" content="1 Million Spheres - PBR Materials with Dynamic Lighting">
+    <meta property="og:description" content="Interactive 3D visualization showcasing one million physically-based rendered spheres with dynamic lighting effects and material properties.">
+    <meta property="og:image" content="https://raw.githubusercontent.com/Pvn31/million-sphere/refs/heads/main/ogimage.PNG">
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://million-sphere.pages.dev/">
+    <meta property="twitter:title" content="1 Million Spheres - PBR Materials with Dynamic Lighting">
+    <meta property="twitter:description" content="Interactive 3D visualization showcasing one million physically-based rendered spheres with dynamic lighting effects and material properties.">
+    <meta property="twitter:image" content="https://raw.githubusercontent.com/Pvn31/million-sphere/refs/heads/main/ogimage.PNG">
+    <!-- Open Graph Image Meta Tag -->
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         canvas { width: 100%; height: 100%; }
@@ -189,7 +209,7 @@ scene.add(lightHelper);
 
 //Create a plane that receives shadows (but does not cast them)
 
-let groundplane_visibility = true; 
+let groundplane_visibility = !isMobile; 
 let plane_size = isMobile?250:1000
 const planeGeometry = new THREE.PlaneGeometry( plane_size, 1000, 32, 32 );
 const planeMaterial = new THREE.MeshStandardMaterial( { color: 0x222222, roughness:0.6 } )
@@ -198,6 +218,7 @@ const plane = new THREE.Mesh( planeGeometry, planeMaterial);
 plane.rotation.x = -Math.PI / 2; // Rotate 90 degrees on the x-axis
 plane.position.set(0,-1,0)
 plane.receiveShadow = true;
+plane.visible = groundplane_visibility;
 scene.add( plane );
 
 // Controls
