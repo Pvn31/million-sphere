@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>1 Million Spheres - PBR Materials with Dynamic Lighting</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { width: 100%; height: 100%; }
+        #info { 
+            position: absolute; 
+            top: 10px; 
+            right: 10px; 
+            color: white; 
+            background-color: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        #footer{
+          position: absolute; 
+          bottom: 10px;
+          top:auto; 
+          right: 40vw;
+          left:auto;
+          color: rgb(248, 239, 141); 
+          background-color: rgba(0,0,0,0.7);
+          padding: 10px;
+          border-radius: 5px;
+          font-family: monospace;
+        }
+        #controls {
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            color: white;
+            background-color: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        #footer > a {
+          color: rgb(153, 41, 252);
+          text-decoration: underline;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="info"></div>
+    <div id="footer">Made by <a href="https://github.com/Pvn31">Pavan.</a>    Source <a href="https://github.com/Pvn31/million-sphere">code</a> is single html file.</div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+	// Import statements remain the same
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import Stats from 'three/addons/libs/stats.module.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SSRPass } from 'three/addons/postprocessing/SSRPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+console.log("Three Version: ",THREE.REVISION)
+// Detect if the device is mobile
+console.log(navigator.userAgent, window.innerWidth)
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+console.log("Is Mobile Detected:", isMobile)
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf2f2f2);
+
+// Camera setup
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(1, 10, 10);
+camera.lookAt(0, 0, 0);
+camera.far = isMobile? 1000 : 10000;
+camera.near = 0.1;
+camera.updateProjectionMatrix()
+let enableSSR= false;
+let composer;
+let ssrPass;
+// Renderer setup
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.physicallyCorrectLights = true;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = isMobile? false : true;
+renderer.shadowMap.type = THREE.PCFShadowMap; // default THREE.PCFShadowMap
+
+document.body.appendChild(renderer.domElement);
+
+const renderScene = new RenderPass( scene, camera );
+ssrPass = new SSRPass({
+  renderer,
+  scene,
+  camera,
+  width: window.innerWidth,
+  height: window.innerHeight,
+  encoding: THREE.sRGBEncoding,
+  selects: null
+})
+ssrPass.output = SSRPass.OUTPUT.Default
+ssrPass.blur = true;
+ssrPass.fresnel = false;
+ssrPass.maxDistance = 1
+const outputPass = new OutputPass();
+
+composer = new EffectComposer(renderer);
+composer.addPass(renderScene);
+composer.addPass(ssrPass);
+composer.addPass(outputPass);
+
+// Lighting setup
+const ambientLight = new THREE.AmbientLight(0xd1e9ff, 0.3);
+scene.add(ambientLight);
+
+// Main directional light (sun)
+let directionalLight_color = "#fffed6";
+let directionalLight_strength = 1.2;
+let directionalLight_castShadow = !isMobile
+const directionalLight = new THREE.DirectionalLight(directionalLight_color, directionalLight_strength);
+directionalLight.position.set(10, 50, 50 );
+directionalLight.castShadow = directionalLight_castShadow; // disable for performance
+const d = 50; // Cover 1000x1000 scene, but optimize below
+directionalLight.shadow.camera.left = -d;
+directionalLight.shadow.camera.right = d;
+directionalLight.shadow.camera.top = d;
+directionalLight.shadow.camera.bottom = -d;
+directionalLight.shadow.camera.far = 100;
+directionalLight.shadow.intensity = 10.0
+directionalLight.shadow.mapSize.width = 512; // Higher resolution (try 4096 if GPU allows)
+directionalLight.shadow.mapSize.height = 512;
+directionalLight.shadow.camera.near = 1; // Adjust to avoid clipping
+directionalLight.shadow.camera.far = 1000; // Match your scene depth
+directionalLight.shadow.bias = -0.0001; // Reduce shadow acne
+directionalLight.shadow.normalBias = 0.01; // Reduce peter-panning
+directionalLight.shadow.camera.updateProjectionMatrix();
+scene.add(directionalLight);
+
+// Create the point light
+// Animation parameters
+let radius = 10;
+let speed = 3;  // Speed of rotation (radians per second)
+let dt = 0.001;
+let theta = 0 //dt * speed
+let point_color = "#ffd500"
+let point_intensity = 150
+let point_distance = 25
+let point_decay = 2
+
+const pointLight = new THREE.PointLight(point_color, point_intensity, point_distance); // Color, intensity, distance
+pointLight.castShadow = true;
+pointLight.shadow.radius=0.2;
+pointLight.shadow.blurSamples=10;
+scene.add(pointLight);
+
+// Add a helper to visualize the light (optional)
+const lightHelper = new THREE.PointLightHelper(pointLight, 0.5);
+scene.add(lightHelper);
+
+
+//Create a plane that receives shadows (but does not cast them)
+
+let groundplane_visibility = true; 
+let plane_size = isMobile?250:1000
+const planeGeometry = new THREE.PlaneGeometry( plane_size, 1000, 32, 32 );
+const planeMaterial = new THREE.MeshStandardMaterial( { color: 0x222222, roughness:0.6 } )
+const phong = new THREE.MeshPhongMaterial({ color: 0x999999, specular: 0x101010 })
+const plane = new THREE.Mesh( planeGeometry, planeMaterial);
+plane.rotation.x = -Math.PI / 2; // Rotate 90 degrees on the x-axis
+plane.position.set(0,-1,0)
+plane.receiveShadow = true;
+scene.add( plane );
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.listenToKeyEvents(window);
+controls.keys = {
+    LEFT: 'KeyA',
+    UP: 'KeyW',
+    RIGHT: 'KeyD',
+    BOTTOM: 'KeyS'
+};
+controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN
+};
+
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+
+const stats = new Stats();
+for (let i = 0; i < stats.dom.children.length; i++) {
+    stats.dom.children[i].style.display = 'block';
+}
+document.body.appendChild(stats.dom);
+
+// World parameters - customizable
+let worldSize = isMobile?{
+    x: 250,
+    y: 10,
+    z: 250
+}:{
+    x: 1000,
+    y: 1,
+    z: 1000
+};
+let chunkCount = isMobile?{
+    x: 8,
+    y: 1,
+    z: 8,
+}:{
+    x: 20,
+    y: 1,
+    z: 20,
+};
+let chunkSize = {
+    x: worldSize.x / chunkCount.x,
+    y: worldSize.y / chunkCount.y,
+    z: worldSize.z / chunkCount.z
+};
+
+
+// Adjust total spheres based on device
+let totalSpheres = isMobile ? 10_000 : 1_000_000; // Reduce to 100k on mobile
+
+let spheresPerChunk = Math.floor(totalSpheres / (chunkCount.x * chunkCount.y * chunkCount.z));
+let sphereRadiusSettings = {
+    min: 0.2,
+    max: 0.6,
+    randomize: true
+};
+
+let debugSettings = {
+    showChunkBoundaries: false,
+    chunkBoxHelpers: []
+};
+
+// HDRI Environment
+let hdriSettings = {
+    enabled: true,
+    backgroundEnabled: true,
+    currentHDRI: null,
+    exposureLevel: 1.0,
+    backgroundBlurriness:0.0,
+    strength:1.0,
+    rotation:0.0,
+};
+const defaultHDRI = 'https://threejs.org/examples/textures/equirectangular/venice_sunset_1k.hdr';
+
+async function loadHDRIEnvironment(url) { 
+    try {
+        const texture = await new RGBELoader().loadAsync(url);
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        
+        if (hdriSettings.enabled) {
+            scene.environment = texture;
+            scene.environmentRotation.y = 1.8;
+        }
+        if (hdriSettings.backgroundEnabled) {
+            scene.background = texture;
+            scene.backgroundRotation.y = 1.8;
+        }
+        
+        hdriSettings.currentHDRI = texture;
+        renderer.toneMappingExposure = hdriSettings.exposureLevel;
+        
+        console.log("HDRI Loaded...");
+        return texture;
+    } catch (error) {
+        console.error("Error loading HDRI:", error);
+        throw error;
+    }
+}
+
+const lodGeometries =  isMobile
+    ? [
+        new THREE.SphereGeometry(1, 8, 6),
+        new THREE.SphereGeometry(1, 6, 4),
+        new THREE.SphereGeometry(1, 4, 3),
+        new THREE.SphereGeometry(1, 4, 3)
+    ]
+    : [
+        new THREE.SphereGeometry(1, 16, 12),
+        new THREE.SphereGeometry(1, 12, 8),
+        new THREE.SphereGeometry(1, 6, 4),
+        new THREE.SphereGeometry(1, 4, 3)
+    ];
+
+
+
+let outline_color = "#00ff00";
+let outline_thickness = 0.6;
+
+let materialSettings={
+  roughness: 0.4,
+  metalness: 0.2,
+  reflectivity: 1,
+  clearcoat: 1,
+  clearcoat_roughness: 0,
+  specularIntensity: 1.0,
+  specularColor: 0xffffff,
+}
+// Base PBR material
+const baseMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,       // White base color for tinting
+    metalness: materialSettings.metalness,
+    roughness: materialSettings.roughness,
+    flatShading: false,     // Smooth shading for better quality
+    reflectivity: materialSettings.reflectivity,
+    specularIntensity: materialSettings.specularIntensity,
+    specularColor: materialSettings.specularColor,
+    envMap: scene.environment
+});
+
+let inverse_hull_outlineMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+    color: { value: new THREE.Color(outline_color) }, // Outline color (yellow by default)
+    thickness: { value: outline_thickness },                  // Outline thickness
+    size: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) } // Viewport size (update this based on your canvas)
+    },
+    vertexShader: `
+    uniform float thickness;
+    uniform vec2 size;
+
+    void main() {
+        // Transform position to world space
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+
+        // Compute normal in world space (assuming we have normals available)
+        vec3 objectNormal = vec3(normal);
+        vec3 transformedNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
+
+        // Offset in world space before projection
+        vec3 offsetPosition = worldPosition.xyz + transformedNormal * thickness;
+        gl_Position = projectionMatrix * viewMatrix * vec4(offsetPosition, 1.0);
+        
+    }
+    `,
+    fragmentShader: `
+    uniform vec3 color;
+
+    void main() {
+        gl_FragColor = vec4(color, 1.0);
+    }
+    `,
+    side: THREE.BackSide // Render only the back faces for the outline effect
+    });
+
+// since only spheres in the scene fresnel outline really works well and gives crisp results
+let fresnel_outlineMaterial = new THREE.ShaderMaterial({
+			uniforms: {
+				outlineColor: { value: new THREE.Color(outline_color) },
+				outlineThickness: { value: outline_thickness}
+			},
+			vertexShader: `
+				varying vec3 vNormal;
+				varying vec3 vViewPosition;
+				
+				void main() {
+				  vNormal = normalize(normalMatrix * normal);
+				  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+				  vViewPosition = -mvPosition.xyz; // Camera to vertex direction
+				  gl_Position = projectionMatrix * mvPosition;
+				}
+
+			`,
+			fragmentShader: `
+				varying vec3 vNormal;
+				varying vec3 vViewPosition;
+				
+				uniform vec3 outlineColor;
+				uniform float outlineThickness;
+				
+				void main() {
+				  vec3 viewDir = normalize(vViewPosition);
+				  float intensity = 1.0 - dot(vNormal, viewDir);
+				  if (intensity < outlineThickness) discard;
+				  gl_FragColor = vec4(outlineColor, 1.0);
+				}
+			`,
+			side: THREE.FrontSide,
+			depthTest: false,
+			depthWrite: false
+    });
+
+
+// Raycaster setup
+const raycaster = new THREE.Raycaster();
+raycaster.near = 0;
+const mouse = new THREE.Vector2();
+
+let highlightedSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 12),
+    fresnel_outlineMaterial
+);
+// highlightedSphere.position.set(250,250,250)
+highlightedSphere.visible = false;
+scene.add(highlightedSphere);
+let chunks = [];
+
+// Material variations for visual interest
+// we only use basecolor as per instance uniform reequires huge amount of work to patch the shader
+//or rewrite a new shader for specifically this use case.
+const materialTypes = [
+  [
+    { baseColor: new THREE.Color("rgb(239, 71, 111)"),}, // red
+    { baseColor: new THREE.Color("rgb(38, 84, 124)"),},  // navy blue
+    { baseColor: new THREE.Color("rgb(255, 209, 102)"),},  // yellow toy
+    { baseColor: new THREE.Color("rgb(6, 214, 160)"),},   // tealish?
+    { baseColor: new THREE.Color(0.5, 0.5, 0.5),},  // Chrome
+  ],
+  [
+  { baseColor: new THREE.Color("#386641"),},
+  { baseColor: new THREE.Color("#6a994e"),},
+  { baseColor: new THREE.Color("#a7c957"),},
+  { baseColor: new THREE.Color("#fbf7ef"),},
+  { baseColor: new THREE.Color("#c9182c"),},
+  { baseColor: new THREE.Color("#782832"),},
+  ]
+];
+
+class UIManager {
+  constructor(options = {}) {
+    this.container = null;
+    this.isDragging = false;
+    this.dragOffset = { x: 0, y: 0 };
+    this.sections = {};
+    this.options = {
+      title: options.title || 'Three.js World Generator',
+      width: options.width || '300px',
+      position: options.position || { top: '10px', right: '10px' },
+      isMobile: isMobile
+    };
+    
+    this.init();
+  }
+
+  init() {
+    this.setupTailwind();
+    this.createContainer();
+    this.createHeader();
+  }
+  
+  setupTailwind() {
+    // Only add Tailwind if it's not already loaded
+    if (!document.getElementById('tailwind-css')) {
+      const tailwindCDN = document.createElement('script');
+      tailwindCDN.src = 'https://cdn.tailwindcss.com';
+      tailwindCDN.id = 'tailwind-css';
+      document.head.appendChild(tailwindCDN);
+    }
+  }
+
+  createContainer() {
+    this.container = document.createElement('div');
+    this.container.className = 'absolute bg-gray-900/70 rounded-md text-white font-sans text-xs max-h-[90vh] shadow-lg z-[1000]';
+    this.container.id = 'controls'
+    this.container.style.width = this.options.width;
+    // Position based on isMobile
+    if (this.options.isMobile) {
+      this.container.style.maxHeight = '50%';
+      this.container.style.maxWidth = '80%';
+      this.container.style.bottom = '10px';  // Fixed to bottom
+      this.container.style.left = '10px';   // Fixed to left
+      this.container.style.top = 'auto';    // Override any top positioning
+      this.container.style.right = 'auto';  // Override any right positioning
+
+      document.getElementById("footer").style.right = '10px';
+    } else {
+      this.container.style.top = this.options.position.top;
+      this.container.style.right = this.options.position.right;
+      this.container.style.bottom = 'auto'; // Ensure bottom isn't set
+      this.container.style.left = 'auto';   // Ensure left isn't set
+    }
+    
+    // Create content wrapper
+    this.contentWrapper = document.createElement('div');
+    this.contentWrapper.className = 'overflow-y-auto transition-all duration-300 ease-out';
+    this.contentWrapper.style.maxHeight = 'calc(90vh - 40px)'; // Adjust based on header height
+    this.container.appendChild(this.contentWrapper);
+    
+    document.body.appendChild(this.container);
+  }
+
+  createHeader() {
+    const header = document.createElement('div');
+    header.className = 'p-2 bg-gray-800/90 border-b border-gray-600 cursor-move rounded-t-md select-none flex justify-between items-center';
+    
+    const title = document.createElement('h2');
+    title.textContent = this.options.title;
+    title.className = 'm-0 text-sm font-medium';
+    
+    // Add collapse toggle
+    const collapseIcon = document.createElement('span');
+    collapseIcon.textContent = '▼';
+    collapseIcon.className = 'text-xs transition-transform duration-300';
+    
+    header.appendChild(title);
+    header.appendChild(collapseIcon);
+    this.container.insertBefore(header, this.contentWrapper);
+
+    this.setupDragHandling(header);
+    
+    // Add collapse functionality
+    header.addEventListener('click', (e) => {
+      // Only trigger collapse if clicking the header itself, not dragging
+      if (!this.isDragging && e.target !== header.querySelector('input')) {
+        this.toggleCollapse(collapseIcon);
+      }
+    });
+  }
+  
+  toggleCollapse(collapseIcon) {
+    this.isCollapsed = !this.isCollapsed;
+    if (this.isCollapsed) {
+      this.contentWrapper.style.maxHeight = '0px';
+      this.contentWrapper.style.padding = '0';
+      collapseIcon.style.transform = 'rotate(-90deg)';
+      this.container.className = 'absolute bg-gray-900/70 rounded-md text-white font-sans text-xs shadow-lg z-[1000]';
+    } else {
+      this.contentWrapper.style.maxHeight = 'calc(90vh - 40px)';
+      this.contentWrapper.style.padding = '4px 0';
+      collapseIcon.style.transform = 'rotate(0deg)';
+      this.container.className = 'absolute bg-gray-900/70 rounded-md text-white font-sans text-xs max-h-[90vh] shadow-lg z-[1000]';
+    }
+  }
+  
+  setupDragHandling(header) {
+    header.addEventListener('mousedown', (e) => {
+      this.isDragging = true;
+      this.dragOffset.x = e.clientX - this.container.offsetLeft;
+      this.dragOffset.y = e.clientY - this.container.offsetTop;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (this.isDragging) {
+        const left = e.clientX - this.dragOffset.x;
+        const top = e.clientY - this.dragOffset.y;
+        const maxX = window.innerWidth - this.container.offsetWidth;
+        const maxY = window.innerHeight - this.container.offsetHeight;
+        
+        this.container.style.left = `${Math.max(0, Math.min(left, maxX))}px`;
+        this.container.style.top = `${Math.max(0, Math.min(top, maxY))}px`;
+        this.container.style.right = 'auto';
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      this.isDragging = false;
+    });
+  }
+  
+  createSection(id, title) {
+    const sectionContainer = document.createElement('div');
+    sectionContainer.className = 'mx-1 my-1 bg-gray-800/70 rounded overflow-hidden'; // Smaller margin
+    
+    // Section header - more compact
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'px-2 py-1 bg-gray-700/70 cursor-pointer flex justify-between items-center select-none';
+    
+    const sectionTitle = document.createElement('h3');
+    sectionTitle.textContent = title;
+    sectionTitle.className = 'm-0 text-xs font-medium';
+    
+    const collapseIcon = document.createElement('span');
+    collapseIcon.textContent = '▼';
+    collapseIcon.className = 'text-xs transition-transform duration-300';
+    
+    sectionHeader.appendChild(sectionTitle);
+    sectionHeader.appendChild(collapseIcon);
+    sectionContainer.appendChild(sectionHeader);
+    
+    // Section content - more compact
+    const sectionContent = document.createElement('div');
+    sectionContent.className = 'p-2 transition-all duration-300 ease-out max-h-[500px]';
+    sectionContainer.appendChild(sectionContent);
+    
+    // Toggle collapse on header click
+    sectionHeader.addEventListener('click', () => {
+      if (sectionContent.style.maxHeight !== '0px') {
+        sectionContent.style.maxHeight = '0px';
+        sectionContent.style.padding = '0 8px';
+        collapseIcon.style.transform = 'rotate(-90deg)';
+      } else {
+        sectionContent.style.maxHeight = '500px';
+        sectionContent.style.padding = '8px';
+        collapseIcon.style.transform = 'rotate(0deg)';
+      }
+    });
+    
+    this.contentWrapper.appendChild(sectionContainer);
+    
+    // Store the section reference
+    this.sections[id] = {
+      container: sectionContainer,
+      content: sectionContent,
+      header: sectionHeader
+    };
+    
+    return sectionContent;
+  }
+  
+  addLabeledInput(sectionId, label, min, max, value, onChange, step = 1) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-1 flex flex-col'; // Smaller margin
+    
+    const labelElement = document.createElement('label');
+    labelElement.textContent = label;
+    labelElement.className = 'mb-0.5 text-xs'; // Smaller margin, smaller text
+    
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'flex items-center gap-1'; // Smaller gap
+    
+    // Slider
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = min;
+    slider.max = max;
+    slider.step = step;
+    slider.className = 'flex-grow h-1 appearance-none bg-gray-600 rounded outline-none'; // Smaller height
+    // Add custom slider styles
+    const thumbStyle = `
+      input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #4CAF50;
+        cursor: pointer;
+      }
+      input[type=range]::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #4CAF50;
+        cursor: pointer;
+      }
+    `;
+    
+    if (!document.getElementById('range-slider-style')) {
+      const styleElement = document.createElement('style');
+      styleElement.id = 'range-slider-style';
+      styleElement.textContent = thumbStyle;
+      document.head.appendChild(styleElement);
+    }
+    
+    // Number input
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = min;
+    input.max = max;
+    input.step = step;
+    input.className = 'w-16 bg-gray-800 text-white border border-gray-600 rounded px-1 py-0.5 text-xs'; // Smaller size
+    
+    // Event listeners for synchronization
+    slider.addEventListener('input', (e) => {
+      const newValue = parseFloat(slider.value);
+      input.value = newValue;
+      if (onChange) onChange(newValue, event = e);
+    });
+    
+    input.addEventListener('change', (e) => {
+      const newValue = parseFloat(input.value);
+      if (!isNaN(newValue)) {
+        slider.value = newValue;
+        if (onChange) onChange(newValue, event = e);
+      }
+    });
+    
+    // Assemble the control
+    controlsDiv.appendChild(slider);
+    controlsDiv.appendChild(input);
+    slider.value = value;
+    input.value = value;
+
+    div.appendChild(labelElement);
+    div.appendChild(controlsDiv);
+    section.appendChild(div);
+    
+    return { slider, input };
+  }
+  
+  addCheckbox(sectionId, label, checked, onChange) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-0.5 flex items-center'; // Smaller margin
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = checked;
+    checkbox.className = 'mr-1 cursor-pointer w-3 h-3'; // Smaller size and margin
+    
+    // Add checkmark when checked
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        checkbox.style.backgroundColor = '#4CAF50';
+        checkbox.style.borderColor = '#4CAF50';
+      } else {
+        checkbox.style.backgroundColor = '#333';
+        checkbox.style.borderColor = '#555';
+      }
+      if (onChange) onChange(checkbox.checked);
+    });
+    
+    const labelElement = document.createElement('label');
+    labelElement.textContent = label;
+    labelElement.className = 'flex-grow cursor-pointer text-xs'; // Smaller text
+    
+    // Make label toggle checkbox
+    labelElement.addEventListener('click', () => {
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change'));
+    });
+    
+    div.appendChild(checkbox);
+    div.appendChild(labelElement);
+    section.appendChild(div);
+    
+    return checkbox;
+  }
+  
+  addButton(sectionId, label, onClick) {
+    const section = this.sections[sectionId].content;
+    
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.className = 'w-full py-1 px-2 my-1 bg-gray-700 text-white border-none rounded cursor-pointer hover:bg-gray-600 transition-colors duration-200 text-xs'; // Smaller padding and text
+    
+    button.addEventListener('click', onClick);
+    section.appendChild(button);
+    
+    return button;
+  }
+  
+  addTextInput(sectionId, label, value, onChange) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-1 flex flex-col'; // Smaller margin
+    
+    const labelElement = document.createElement('label');
+    labelElement.textContent = label;
+    labelElement.className = 'mb-0.5 text-xs'; // Smaller margin and text
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value;
+    input.className = 'w-full bg-gray-800 text-white border border-gray-600 rounded px-1.5 py-0.5 box-border text-xs'; // Smaller padding and text
+    
+    if (onChange) {
+      input.addEventListener('change', () => {
+        onChange(input.value);
+      });
+    }
+    
+    div.appendChild(labelElement);
+    div.appendChild(input);
+    section.appendChild(div);
+    
+    return input;
+  }
+  
+  // Add InfoText without requiring a section
+  addGlobalInfoText(html) {
+    const div = document.createElement('div');
+    div.className = 'mx-1 my-1 p-1.5 text-xs leading-relaxed bg-gray-800/70 rounded';
+    div.innerHTML = html;
+    
+    this.contentWrapper.appendChild(div);
+    
+    return div;
+  }
+  
+  // Original addInfoText method that requires a section
+  addInfoText(sectionId, html) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-0.5 text-xs leading-tight'; // Smaller margin and tighter leading
+    div.innerHTML = html;
+    
+    section.appendChild(div);
+    
+    return div;
+  }
+  
+  // New dropdown method
+  addDropdown(sectionId, label, options, defaultValue, onChange) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-1 flex flex-col'; // Smaller margin
+    
+    const labelElement = document.createElement('label');
+    labelElement.textContent = label;
+    labelElement.className = 'mb-0.5 text-xs'; // Smaller margin and text
+    
+    const select = document.createElement('select');
+    select.className = 'bg-gray-800 text-white border border-gray-600 rounded px-1 py-0.5 text-xs w-full';
+    
+    // Add options to the dropdown
+    options.forEach(option => {
+      const optionElement = document.createElement('option');
+      
+      // Handle both simple arrays and arrays of objects
+      if (typeof option === 'object' && option !== null) {
+        optionElement.value = option.value;
+        optionElement.textContent = option.label;
+      } else {
+        optionElement.value = option;
+        optionElement.textContent = option;
+      }
+      
+      // Set the default selected option
+      if (optionElement.value === defaultValue) {
+        optionElement.selected = true;
+      }
+      
+      select.appendChild(optionElement);
+    });
+    
+    if (onChange) {
+      select.addEventListener('change', () => {
+        onChange(select.value);
+      });
+    }
+    
+    div.appendChild(labelElement);
+    div.appendChild(select);
+    section.appendChild(div);
+    
+    return select;
+  }
+  
+  // New color picker method
+  addColorPicker(sectionId, label, defaultColor, onChange) {
+    const section = this.sections[sectionId].content;
+    
+    const div = document.createElement('div');
+    div.className = 'my-1 flex items-center justify-between'; // Smaller margin
+    
+    const labelElement = document.createElement('label');
+    labelElement.textContent = label;
+    labelElement.className = 'text-xs'; // Smaller text
+    
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = defaultColor;
+    colorInput.className = 'w-8 h-6 bg-transparent border-0 cursor-pointer'; // Smaller size
+    
+    // Custom color display
+    const colorDisplay = document.createElement('div');
+    colorDisplay.className = 'w-6 h-6 ml-1 border border-gray-600 rounded';
+    colorDisplay.style.backgroundColor = defaultColor;
+    
+    // Hex value display
+    const hexValue = document.createElement('span');
+    hexValue.textContent = defaultColor;
+    hexValue.className = 'text-xs mx-1 flex-grow-0';
+    
+    const colorWrapper = document.createElement('div');
+    colorWrapper.className = 'flex items-center';
+    colorWrapper.appendChild(colorInput);
+    colorWrapper.appendChild(hexValue);
+    
+    if (onChange) {
+      colorInput.addEventListener('input', () => {
+        colorDisplay.style.backgroundColor = colorInput.value;
+        hexValue.textContent = colorInput.value;
+        onChange(colorInput.value);
+      });
+      
+      colorInput.addEventListener('change', () => {
+        colorDisplay.style.backgroundColor = colorInput.value;
+        hexValue.textContent = colorInput.value;
+        onChange(colorInput.value);
+      });
+    }
+    
+    div.appendChild(labelElement);
+    div.appendChild(colorWrapper);
+    section.appendChild(div);
+    
+    return { colorInput, colorDisplay, hexValue };
+  }
+  
+  // Helper method to validate and apply min/max constraints between related sliders
+  setupLinkedSliders(sectionId, minSettings, maxSettings) {
+    const minInputs = this.addLabeledInput(
+      sectionId, 
+      minSettings.label, 
+      minSettings.min, 
+      minSettings.max, 
+      minSettings.value, 
+      (value) => {
+        minSettings.onChange(value);
+        if (value > maxSettings.value) {
+          // Update the max value if min exceeds it
+          const inputs = this.sections[sectionId].content.querySelectorAll('input');
+          const maxRadiusInput = inputs[3]; // Number input 
+          const maxRadiusSlider = inputs[2]; // Slider
+          maxRadiusInput.value = value;
+          maxRadiusSlider.value = value;
+          maxSettings.onChange(value);
+        }
+      }, 
+      minSettings.step || 1
+    );
+    
+    const maxInputs = this.addLabeledInput(
+      sectionId, 
+      maxSettings.label, 
+      maxSettings.min, 
+      maxSettings.max, 
+      maxSettings.value, 
+      (value) => {
+        maxSettings.onChange(value);
+        if (value < minSettings.value) {
+          // Update the min value if max falls below it
+          const inputs = this.sections[sectionId].content.querySelectorAll('input');
+          const minRadiusInput = inputs[1]; // Number input
+          const minRadiusSlider = inputs[0]; // Slider
+          minRadiusInput.value = value;
+          minRadiusSlider.value = value;
+          minSettings.onChange(value);
+        }
+      }, 
+      maxSettings.step || 1
+    );
+    
+    return { minInputs, maxInputs };
+  }
+}
+
+
+let backgeound_color = '#383838';
+
+function createUI(){
+    const ui = new UIManager({
+        title: 'Three.js Million Sphere at 60FPS',
+        width: '300px',
+        position: { top: '60px', right: '10px'}
+    });
+
+    ui.createSection("worldSettings", "World Settings")
+    console.log(ui.sections,ui)
+    ui.sections["worldSettings"].header.click();
+    ui.createSection("instances", "Instance Settings")
+    ui.sections["instances"].header.click();
+    ui.createSection("scene", "Scene Settings")
+    ui.sections["scene"].header.click();
+    ui.createSection("debug", "Debug Settings")
+    ui.sections["debug"].header.click();
+    ui.createSection("pointlight","Point Light")
+    ui.sections["pointlight"].header.click();
+    ui.createSection("ssr","SSR")
+    ui.sections["ssr"].header.click();
+    
+    ui.addLabeledInput('pointlight', 'Intensity', 0, 1000, point_intensity, (value) => {
+      point_intensity = value;
+      pointLight.intensity = value;
+    },5);
+    ui.addColorPicker('pointlight', 'Color', point_color, (value) => {
+      point_color = value;
+      const color = new THREE.Color(value)
+      pointLight.color.setHex(color.getHex());
+    });
+    ui.addLabeledInput('pointlight', 'Distance', 0, 100, point_distance, (value) => {
+      point_distance = value;
+      pointLight.distance = value;
+    },1);
+
+    ui.addLabeledInput('pointlight', 'Decay', 0, 3, point_decay, (value) => {
+      point_decay = value;
+      pointLight.decay = value;
+    },0.1);
+
+    ui.addLabeledInput('pointlight', 'Animation Radius', 10, 250, radius, (value) => {
+      radius = value;
+    },1);
+
+    ui.addLabeledInput('pointlight', 'Animation Speed', 0, 100, speed, (value) => {
+      speed = value;
+    },1);
+
+    ui.addLabeledInput('worldSettings', 'Spheres:', 10000, 1000000, totalSpheres, (value, e) => {
+      totalSpheres = value;
+    });
+
+    ui.addLabeledInput('worldSettings', 'World Size X:', 1, 1000, worldSize.x, (value) => {
+        worldSize.x = value;
+    });
+
+    ui.addLabeledInput('worldSettings', 'World Size Y:', 1, 1000, worldSize.y, (value) => {
+        worldSize.y = value;
+    });
+
+    ui.addLabeledInput('worldSettings', 'World Size Z:', 1, 1000, worldSize.z, (value) => {
+        worldSize.z = value;
+    });
+
+    // Chunk Count Controls
+    ui.addLabeledInput('worldSettings', 'Chunk Count X:', 1, 20, chunkCount.x, (value) => {
+        chunkCount.x = value;
+    });
+
+    ui.addLabeledInput('worldSettings', 'Chunk Count Y:', 1, 20, chunkCount.y, (value) => {
+        chunkCount.y = value;
+    });
+
+    ui.addLabeledInput('worldSettings', 'Chunk Count Z:', 1, 20, chunkCount.z, (value) => {
+        chunkCount.z = value;
+    });
+
+    ui.addButton('worldSettings', 'Apply Chunk Count', () => {
+        createWorld();
+    });
+
+    // Debug Visualization
+    ui.addCheckbox('debug', 'Show Chunk Boundaries', debugSettings.showChunkBoundaries, (checked) => {
+        debugSettings.showChunkBoundaries = checked;
+        createChunkDebugVisuals();
+    });
+
+    ui.addLabeledInput('debug', 'Camera Far:', 100, 10000, camera.far, (value) => {
+        camera.far = value;
+        camera.updateProjectionMatrix();
+    });
+
+    // Instances
+
+    ui.addLabeledInput('instances', 'Roughness', 0, 1, materialSettings.roughness, (value) => {
+      materialSettings.roughness = value;
+      baseMaterial.roughness = value;
+      baseMaterial.needsUpdate = true;
+    },0.01);
+
+    ui.addLabeledInput('instances', 'Metalness', 0, 1, materialSettings.metalness, (value) => {
+      materialSettings.metalness = value;
+      baseMaterial.metalness = value;
+      baseMaterial.needsUpdate = true;
+    },0.01);
+
+    ui.addLabeledInput('instances', 'Reflectivity', 0, 1, materialSettings.reflectivity, (value) => {
+      materialSettings.reflectivity = value;
+      baseMaterial.reflectivity = value;
+      baseMaterial.needsUpdate = true;
+    },0.01);
+
+    ui.addLabeledInput('instances', 'Clearcoat', 0, 1, materialSettings.clearcoat, (value) => {
+      materialSettings.clearcoat = value;
+      baseMaterial.clearcoat = value;
+      baseMaterial.needsUpdate = true;
+    },0.01);
+
+    ui.addLabeledInput('instances', 'Clearcoat roughness', 0, 1, materialSettings.clearcoat_roughness, (value) => {
+      materialSettings.clearcoat_roughness = value;
+      baseMaterial.clearcoatRoughness = value;
+      baseMaterial.needsUpdate = true;
+    },0.01);
+
+    ui.setupLinkedSliders('instances',{
+        label: 'Min Radius:',
+        min: 0.1,
+        max: 2,
+        value: sphereRadiusSettings.min,
+        onChange: (value) => { sphereRadiusSettings.min = value; updateInstanceRadius()},
+        step: 0.05
+    },
+    {
+        label: 'Max Radius:',
+        min: 0.1,
+        max: 2,
+        value: sphereRadiusSettings.max,
+        onChange: (value) => { sphereRadiusSettings.max = value; updateInstanceRadius()},
+        step: 0.1
+    }
+    );
+
+    ui.addCheckbox('instances', 'Randomize Radius (averages min-max radius when off)', sphereRadiusSettings.randomize, (checked) => {
+        sphereRadiusSettings.randomize = checked;
+        updateInstanceRadius()
+    });
+
+    ui.addCheckbox('ssr', 'Enable SSR (Performance Heavy)', enableSSR, (checked) => {
+        enableSSR = checked;
+    });
+
+    ui.addCheckbox('ssr', 'bouncing:', ssrPass.bouncing, (checked) => {
+      ssrPass.bouncing = checked;
+    });
+
+    ui.addCheckbox('ssr', 'Fresnel:', ssrPass.fresnel, (checked) => {
+      ssrPass.fresnel = checked;
+    });
+
+    ui.addLabeledInput('ssr', 'max distance:', 0, 5, ssrPass.maxDistance, (value) => {
+      ssrPass.maxDistance = value;
+    },0.1);
+
+    ui.addCheckbox('scene', 'Ground Plane', groundplane_visibility, (checked) => {
+      groundplane_visibility = checked;
+      plane.visible = checked;
+    });
+    // HDRI Environment
+    ui.addCheckbox('scene', 'Enable HDRI Lighting', hdriSettings.enabled, (checked) => {
+        hdriSettings.enabled = checked;
+        toggleHDRIEnvironment(checked);
+    });
+    
+    ui.addCheckbox('scene', 'Enable HDRI Background', hdriSettings.backgroundEnabled, (checked) => {
+        hdriSettings.backgroundEnabled = checked;
+        toggleHDRIBackground(checked);
+    });
+    
+    ui.addColorPicker('scene', 'Background color', backgeound_color, (value) => {
+      backgeound_color = value
+      updateBackgroundColor(value)
+    });
+    
+    ui.addLabeledInput('scene', 'Background Blur', 0, 1, hdriSettings.backgroundBlurriness, (value) => {
+        hdriSettings.backgroundBlurriness = value;
+        scene.backgroundBlurriness = value;
+    }, 0.01);
+
+    ui.addLabeledInput('scene', 'Exposure', 0.1, 5.0, hdriSettings.exposureLevel, (value) => {
+        hdriSettings.exposureLevel = value;
+        renderer.toneMappingExposure = hdriSettings.exposureLevel;
+    }, 0.1);
+
+    ui.addLabeledInput('scene', 'HDRI Rotation', 0, 3.14*2, hdriSettings.rotation, (value) => {
+        hdriSettings.rotation = value;
+        scene.environmentRotation.y = value;
+        scene.backgroundRotation.y = value;
+    }, 0.1);
+
+    ui.addLabeledInput('scene', 'HDRI Strength', 0, 2, hdriSettings.strength, (value) => {
+        hdriSettings.strength = value;
+        console.log(scene)
+        scene.environmentIntensity = value;
+        scene.backgroundIntensity = value;
+        baseMaterial.envMapIntensity = value;
+        baseMaterial.needsUpdate = true
+    }, 0.1);
+
+    ui.addLabeledInput('scene', 'SunLight Intensity', 0, 20, directionalLight_strength, (value) => {
+      directionalLight_strength = value
+        directionalLight.intensity = value;
+    }, 0.1);
+    ui.addColorPicker('scene', 'Sun Light Color', directionalLight_color, (value) => {
+        directionalLight_color = value;
+        const color = new THREE.Color(value)
+        directionalLight.color.setHex(color.getHex());
+    }, 0.1);
+    ui.addCheckbox('scene', 'Cast Shadow', directionalLight_castShadow, (checked) => {
+      directionalLight_castShadow = checked;
+      directionalLight.castShadow = checked
+    });
+
+    ui.addDropdown('scene', 'Outline Method',['Fresnel', 'Inverse Hull'], 'Fresnel', (value)=>{
+      if (value === 'Fresnel'){
+        highlightedSphere.material = fresnel_outlineMaterial
+        highlightedSphere.material.needsUpdate = true; 
+      }
+      if (value === 'Inverse Hull'){
+        highlightedSphere.material = inverse_hull_outlineMaterial
+        highlightedSphere.material.needsUpdate = true; 
+      }
+    })
+    ui.addColorPicker('scene', 'Outline Color',outline_color, (value)=>{
+      const color = new THREE.Color(value)
+      fresnel_outlineMaterial.uniforms.outlineColor.value = color
+      inverse_hull_outlineMaterial.uniforms.color.value = color
+      fresnel_outlineMaterial.needsUpdate = true
+      inverse_hull_outlineMaterial.needsUpdate = true
+    })
+    ui.addLabeledInput('scene', 'Outline Thickness', 0, 1, outline_thickness, (value)=>{
+      fresnel_outlineMaterial.uniforms.outlineThickness.value = value
+      inverse_hull_outlineMaterial.uniforms.thickness.value = value
+      fresnel_outlineMaterial.needsUpdate = true
+      inverse_hull_outlineMaterial.needsUpdate = true
+    }, 0.01)
+
+    
+  return ui
+}
+
+function toggleHDRIEnvironment(checked) {
+    hdriSettings.enabled = checked
+    if (hdriSettings.enabled && hdriSettings.currentHDRI) {
+        scene.environment = hdriSettings.currentHDRI;
+    } else {
+        scene.environment = null;
+    }
+}
+
+function toggleHDRIBackground(checked) {
+    hdriSettings.backgroundEnabled = checked
+    if (hdriSettings.backgroundEnabled && hdriSettings.currentHDRI) {
+        scene.background = hdriSettings.currentHDRI;
+    } else {
+        scene.background = new THREE.Color(backgeound_color);
+		    console.log(scene.background)
+    }
+}
+
+function updateBackgroundColor(color){
+  if (!(hdriSettings.backgroundEnabled)) {
+    scene.background = new THREE.Color(color);
+  }
+}
+
+function createChunkDebugVisuals() {
+    // Clear existing debug visuals
+    debugSettings.chunkBoxHelpers.forEach(helper => {
+        scene.remove(helper);
+    });
+    debugSettings.chunkBoxHelpers = [];
+    
+    if (!debugSettings.showChunkBoundaries) return;
+    
+    // Create new debug visuals for each chunk
+    chunks.forEach(chunk => {
+        const boxHelper = new THREE.Box3Helper(chunk.lodMeshes[0].boundingBox, 0x00ff00);
+        scene.add(boxHelper);
+        debugSettings.chunkBoxHelpers.push(boxHelper);
+    });
+}
+
+function getRandomSphereRadius() {
+    if (sphereRadiusSettings.randomize) {
+        return sphereRadiusSettings.min + Math.random() * (sphereRadiusSettings.max - sphereRadiusSettings.min);
+    }
+    return (sphereRadiusSettings.min + sphereRadiusSettings.max) / 2; // Average if not randomizing
+}
+
+function updateInstanceRadius(){
+    console.log("updating radii")
+    const instanceRadii = [];
+    for (let i = 0; i < spheresPerChunk; i++) {
+        // Random radius for each sphere
+        const radius = getRandomSphereRadius();
+        instanceRadii.push(radius);
+    }
+
+    chunks.forEach(chunk => {
+        chunk.lodMeshes.forEach(lodMesh=>{
+            // Set instance positions
+            let position = new THREE.Vector3()
+            let quaternion = new THREE.Quaternion();
+            let scale = new THREE.Vector3()
+            for (let i = 0; i < spheresPerChunk; i++) {
+                const matrix = new THREE.Matrix4();
+                lodMesh.getMatrixAt(i, matrix);
+
+                matrix.decompose(position,quaternion, scale);
+                scale = new THREE.Vector3(instanceRadii[i],instanceRadii[i],instanceRadii[i])
+                matrix.compose(position, quaternion, scale);
+                lodMesh.setMatrixAt(i, matrix);
+            }
+            lodMesh.instanceMatrix.needsUpdate = true;
+
+            // Calculate bounding box for this chunk
+            const maxRadius = sphereRadiusSettings.randomize?sphereRadiusSettings.max : (sphereRadiusSettings.min + sphereRadiusSettings.max) / 2;
+            const halfSizeX = chunkSize.x / 2 + maxRadius;
+            const halfSizeY = chunkSize.y / 2 + maxRadius;
+            const halfSizeZ = chunkSize.z / 2 + maxRadius;
+            const halfSize = new THREE.Vector3(halfSizeX,halfSizeY, halfSizeZ)
+            const min = chunk.center.clone().sub(halfSize)
+            const max = chunk.center.clone().add(halfSize);
+
+            // Set bounding box for frustum culling
+            lodMesh.boundingBox = new THREE.Box3(min, max);
+        })
+    })
+}
+
+function createWorld() {
+    // Clear existing chunks
+    console.log("Clearing chunks...")
+    chunks.forEach(chunk => {
+        chunk.lodMeshes.forEach(mesh => {
+            scene.remove(mesh);
+        });
+    });
+    chunks = [];
+
+    console.log("creating world...")
+    // Update chunk size based on world size and chunk count
+    // initially it'll be same as decalred values but when we update parameters in from the ui, 
+    // we need to calculate at that time
+    chunkSize = {
+        x: worldSize.x / chunkCount.x,
+        y: worldSize.y / chunkCount.y,
+        z: worldSize.z / chunkCount.z
+    };
+    // Update spheres per chunk
+    spheresPerChunk = Math.floor(totalSpheres / (chunkCount.x * chunkCount.y * chunkCount.z));
+
+    for (let x = 0; x < chunkCount.x; x++) {
+        for (let y = 0; y < chunkCount.y; y++) {
+            for (let z = 0; z < chunkCount.z; z++) {
+
+                const chunkCenter = new THREE.Vector3(
+                    (x + 0.5) * chunkSize.x - worldSize.x / 2,
+                    (y + 0.5) * chunkSize.y - worldSize.y / 2,
+                    (z + 0.5) * chunkSize.z - worldSize.z / 2
+                );
+
+                // Generate positions once per chunk
+                // Different LOD speheres should be at the same position.
+                // we are randomizing the position so we'll pre calculate it 
+                // and assign same to each level of lod
+                const instancePositions = [];
+                const instanceRadii = [];
+                const instanceMaterials = [];
+
+                for (let i = 0; i < spheresPerChunk; i++) {
+                    // Random position within chunk bounds
+                    const pos = new THREE.Vector3(
+                        (Math.random() - 0.5) * chunkSize.x,
+                        (Math.random() - 0.5) * chunkSize.y,
+                        (Math.random() - 0.5) * chunkSize.z
+                    );
+                    instancePositions.push(pos);
+                    
+                    // Random radius for each sphere
+                    const radius = getRandomSphereRadius();
+                    instanceRadii.push(radius);
+                    
+                    // Assign random material type
+                    const palette = i%materialTypes.length;
+                    const color = Math.floor(Math.random() * materialTypes[palette].length);
+                    // console.log(palette, color)
+                    const materialType = materialTypes[palette][color];
+                    // console.log(materialType)
+                    instanceMaterials.push(materialType);
+                }
+
+                // Create LOD meshes for this chunk
+                const lodMeshes = lodGeometries.map(geometry => {
+                    // Create instanced mesh
+                    const mesh = new THREE.InstancedMesh(geometry, baseMaterial, spheresPerChunk);
+                    mesh.position.copy(chunkCenter);
+                    mesh.castShadow = true; //default is false
+                    mesh.receiveShadow = true; //default
+
+                    // Set instance positions
+                    for (let i = 0; i < spheresPerChunk; i++) {
+                        const matrix = new THREE.Matrix4();
+                        matrix.makeScale(instanceRadii[i], instanceRadii[i], instanceRadii[i]);
+                        matrix.setPosition(instancePositions[i]);
+                        mesh.setMatrixAt(i, matrix);
+                    }
+                    mesh.instanceMatrix.needsUpdate = true;
+                    
+                    // Set instance colors (which represent material properties)
+                    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spheresPerChunk * 3), 3);
+                    for (let i = 0; i < spheresPerChunk; i++) {
+                        const materialType = instanceMaterials[i];
+                        mesh.setColorAt(i, materialType.baseColor);
+                    }
+                    mesh.instanceColor.needsUpdate = true;
+                    
+                    // Store material properties for PBR
+                    mesh.userData.instanceMaterials = instanceMaterials;
+
+                    
+
+                    // Calculate bounding box for this chunk
+                    const maxRadius = sphereRadiusSettings.randomize?sphereRadiusSettings.max : (sphereRadiusSettings.min + sphereRadiusSettings.max) / 2;
+                    const halfSizeX = chunkSize.x / 2 + maxRadius;
+                    const halfSizeY = chunkSize.y / 2 + maxRadius;
+                    const halfSizeZ = chunkSize.z / 2 + maxRadius;
+                    const halfSize = new THREE.Vector3(halfSizeX,halfSizeY, halfSizeZ)
+                    const min = chunkCenter.clone().sub(halfSize)
+                    const max = chunkCenter.clone().add(halfSize);
+
+                    // Set bounding box for frustum culling
+                    mesh.boundingBox = new THREE.Box3(min, max);
+                    
+                    return mesh;
+                });
+
+                // Store chunk data
+                const chunk = {
+                    lodMeshes,
+                    center: chunkCenter,
+                    currentLod: 3,
+                    highlightedInstances: new Set(),
+                    instanceMaterials: instanceMaterials,
+                };
+                chunks.push(chunk);
+
+                // Add all LOD meshes to scene
+                lodMeshes.forEach(mesh => scene.add(mesh));
+            }
+        }
+    }
+
+
+    createChunkDebugVisuals()
+    // Log world creation details
+    console.log(`Created world with dimensions: ${worldSize.x}x${worldSize.y}x${worldSize.z}`);
+    console.log(`Chunks: ${chunkCount.x}x${chunkCount.y}x${chunkCount.z}`);
+    console.log(`Spheres per chunk: ${spheresPerChunk}`);
+
+}
+
+function updateLODLevels(){
+    // make sure camera matrix is up to date for frustum occuslion calculations
+    camera.updateMatrixWorld();
+    // Setup frustum for culling
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    );
+
+    // Process all chunks for visibility and LOD
+    let visibleChunkCount = 0
+    chunks.forEach(chunk => {
+        // Check if chunk is in view frustum. 
+        // since boundingbox of all level of lod will be same
+        // we'll use 0 level to early return for chunks that are not in frustum.
+        // this will save us from calculating distance for that chunk
+        const inFrustum = frustum.intersectsBox(chunk.lodMeshes[0].boundingBox);
+        if (!inFrustum) {
+            // Hide all LOD levels if not in view
+            chunk.lodMeshes.forEach(mesh => mesh.visible = false);
+            return;
+        }
+
+        // Select LOD level based on distance
+        const distance = camera.position.distanceTo(chunk.center);
+        let lodLevel;
+
+        if (distance < 25)      lodLevel = 0; // High detail
+        else if (distance < 75) lodLevel = 1; // Medium detail
+        else if (distance < 150)lodLevel = 2; // Low detail
+        else                    lodLevel = 3; // Very low detail
+        
+        chunk.currentLod = lodLevel;
+        // Show only the appropriate LOD level
+        chunk.lodMeshes.forEach((mesh, index) => {
+            mesh.visible = (index === lodLevel) && inFrustum;
+        });
+
+        if (inFrustum) visibleChunkCount++;
+    })
+    return visibleChunkCount;
+}
+
+// Handle clicks for sphere selection
+let outline_matrix = new THREE.Matrix4();
+let outline_position = new THREE.Vector3();
+let outline_scale = new THREE.Vector3();
+// Add velocity tracking to optimize raycasting
+let prevMouseX = 0, prevMouseY = 0;
+let mouseVelocity = 0;
+let skipRaycast = false;
+let lastUpdateTime = 0;
+const velocityThreshold = 35;
+const throttleTime = 50;
+
+function updateHighlight(position,scale, visibility=true){
+    highlightedSphere.position.copy(position);
+    highlightedSphere.scale.copy(scale);
+    highlightedSphere.visible = visibility;
+
+}
+
+function detectHighlightedSphere(event) {
+    const dx = event.clientX - prevMouseX;
+    const dy = event.clientY - prevMouseY;
+    prevMouseX = event.clientX;
+    prevMouseY = event.clientY;
+    
+    // Exponential moving average of velocity
+    mouseVelocity = mouseVelocity * 0.8 + Math.sqrt(dx*dx + dy*dy) * 0.2;
+    // Throttle raycasting during rapid movement
+    const now = performance.now();
+    if (mouseVelocity > velocityThreshold && now - lastUpdateTime < throttleTime) {
+        return; // Skip raycast but keep last highlight
+    }
+
+    lastUpdateTime = now;
+
+    // Calculate normalized device coordinates
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    
+    // Set raycaster from camera and mouse position
+    raycaster.setFromCamera(mouse, camera);
+
+    // Test all visible chunks
+    let hitSomething = false;
+    chunks.forEach(chunk => {
+        if (chunk.currentLod > 3) return;
+        const lodMesh = chunk.lodMeshes[chunk.currentLod];
+        if (!lodMesh.visible) return;
+        
+        const intersects = raycaster.intersectObject(lodMesh);
+        
+        if (intersects.length > 0) {
+            hitSomething = true;
+            const instanceId = intersects[0].instanceId;
+            if (instanceId !== undefined) {
+                // Get the instance's world position
+                lodMesh.getMatrixAt(instanceId, outline_matrix);
+                outline_position.setFromMatrixPosition(outline_matrix);
+                // Convert to world space
+                outline_position.add(lodMesh.position);
+                outline_scale.setFromMatrixScale(outline_matrix);
+                updateHighlight(outline_position,outline_scale);
+                // console.log(intersects[0].instanceId)
+            }
+        }
+    });
+    if (!hitSomething) {
+        highlightedSphere.visible = false;
+        console.log('No sphere intersections');
+    }
+}
+
+window.addEventListener('mousemove', detectHighlightedSphere);
+
+
+let frameCount = 0;
+let lastTime = performance.now();
+const info = document.getElementById('info');
+
+function animate() {
+    
+    requestAnimationFrame(animate);
+    controls.update();
+    const visibleChunkCount = updateLODLevels();
+
+    if (enableSSR){
+      composer.render();
+    }
+    else{
+      renderer.render(scene, camera);
+    }
+    frameCount++;
+    theta += dt * speed; 
+    const x = radius * Math.cos(theta);
+    const z = radius * Math.sin(theta);
+    const y = 2; 
+    pointLight.position.set(x, y, z);
+
+    const currentTime = performance.now();
+    if (currentTime - lastTime >= 1000) {  
+        // Once per second
+        const fps = frameCount / ((currentTime - lastTime) / 1000);
+        const triangles = renderer.info.render.triangles;
+        const calls = renderer.info.render.calls;
+        
+        info.textContent = `
+            FPS: ${fps.toFixed(1)} 
+            | Visible Chunks: ${visibleChunkCount}/${chunks.length} 
+            | Total Spheres: ${totalSpheres}
+            | Triangles: ${triangles.toLocaleString()} 
+            | Draw Calls: ${calls}
+            | Mouse velocity: ${mouseVelocity.toFixed(2)}
+        `;
+        
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+    // Update performance monitor
+    stats.update();
+}
+
+// Initialize
+async function init() {
+    console.log("Initalizing...")
+    // Load default HDRI environment
+    await loadHDRIEnvironment(defaultHDRI);
+    
+    createUI()
+    // Create initial world
+    createWorld();
+    
+    // Start animation loop
+    animate();
+}
+
+// Start the application
+await init();
+
+// Window resize handler
+function onWindowResize() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    inverse_hull_outlineMaterial.uniforms.size.value = new THREE.Vector2(window.innerWidth, window.innerHeight)
+    inverse_hull_outlineMaterial.needsUpdate = true
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.addEventListener('resize', onWindowResize);
+
+</script>
+</body>
+</html>
